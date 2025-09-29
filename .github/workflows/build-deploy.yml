@@ -1,0 +1,89 @@
+name: Build Test and Deploy
+
+on:
+    push:
+        branches:
+            - master
+
+env:
+    IMAGE_NAME: helloapp
+    IMAGE_TAG: latest
+
+jobs:
+    build-test:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Install buildah and podman
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y buildah podman
+
+            - name: Build image
+              run: |
+                  buildah bud --format docker -t $IMAGE_NAME:$IMAGE_TAG .
+
+            - name: Test image
+              run: |
+                  podman run --rm -d -p 8080:8080 --name test-$IMAGE_NAME $IMAGE_NAME:$IMAGE_TAG
+                  sleep 5
+                  curl -f http://localhost:8080 || exit 1
+                  podman stop test-$IMAGE_NAME
+
+            - name: Export image to tarball
+              run: |
+                  buildah push $IMAGE_NAME:$IMAGE_TAG docker-archive:$IMAGE_NAME.tar
+
+            - name: Upload artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ${{ env.IMAGE_NAME }}-image
+                  path: ${{ env.IMAGE_NAME }}.tar
+                  retention-days: 1
+
+    deploy:
+        runs-on: ubuntu-latest
+        needs: build-test
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Download artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  name: ${{ env.IMAGE_NAME }}-image
+
+            - name: Install k3s
+              run: |
+                  curl -sfL https://get.k3s.io -o k3s-install.sh
+                  echo "08ffd92c47a886edd56ce97734f3d67e7f6115f07295dcdcdc6df7ea2c0bee1a k3s-install.sh" | sha256sum -c -
+                  chmod +x k3s-install.sh
+                  sudo ./k3s-install.sh
+                  sudo chmod 644 /etc/rancher/k3s/k3s.yaml
+                  mkdir -p ~/.kube
+                  sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+                  sudo chown $USER:$USER ~/.kube/config
+
+            - name: Wait for k3s to be ready
+              run: |
+                  kubectl wait --for=condition=Ready nodes --all --timeout=60s
+
+            - name: Import image
+              run: |
+                  sudo k3s ctr -n k8s.io images import $IMAGE_NAME.tar
+
+            - name: Deploy
+              run: |
+                  kubectl apply -f deployment.yml
+                  kubectl rollout status deployment/helloapp-deployment --timeout=120s
+
+            - name: Verify deployment
+              run: |
+                  kubectl get deployments
+                  kubectl get pods
+                  kubectl get service helloapp-service
