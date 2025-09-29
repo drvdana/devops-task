@@ -14,4 +14,10 @@
   - `buildah push helloapp:lastest docker-archive:helloapp.tar`
     - note: I only got this to work with `docker-archive`, not `oci-archive`
   - `sudo k3s ctr -n k8s.io images import helloapp.tar`
-- I'm using a type of NodePort here. I think this will have to change for when I'm not testing locally.
+- I'm using a service type of NodePort here. I think this will have to change for when I'm not testing locally. (Update: I'll leave it)
+3. Github Actions ci deploy
+- I'm using Github Actions because it has been a while. I used Jenkins extensively at my last job, so this is a nice change of pace.
+- The k3s pre-built install is buggy. In the interest of making it work I'm including the sha256 of the version of the install script I manually verified.
+  - I said in the commit, but if the k3s install script changes, this would need to update its sha256sum using: `curl -sfL https://get.k3s.io | sha256sum`
+- I'm going back and forth in my mind about running the test script during CI or during the Docker build. I'm going to leave it in the Docker build for now so developers get test feedback earlier.
+- I ended up needing a few commits to get this working. I rebased and squashed to reduce commit spam.
